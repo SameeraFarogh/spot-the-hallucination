@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spot the Hallucination</title><meta name="description" content="A fast fact-or-fabrication party game for 2 to 8 players. Join with a room code.">
+<style>
+:root{--ink:#1B2430;--muted:#5B6672;--line:#D9DEE4;--accent:#2F5D8A;--accent-d:#1F4366;--bg:#FFFFFF;--soft:#F3F6F9;--ok:#2E7D5B;--bad:#B3402F}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.5}
+header{border-bottom:1px solid var(--line);padding:14px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+header b{font-size:18px;letter-spacing:.01em}header span{color:var(--muted);font-size:14px}
+main{max-width:760px;margin:0 auto;padding:24px 18px 48px}
+h1{font-size:28px;margin:0 0 6px}h2{font-size:20px;margin:0 0 10px}p{margin:0 0 12px}
+.muted{color:var(--muted)}
+.card{border:1px solid var(--line);border-radius:8px;padding:20px;margin-bottom:16px;background:#fff}
+input[type=text]{width:100%;padding:11px 12px;border:1px solid #B8C0C9;border-radius:6px;font:inherit;margin:4px 0 12px}
+input[type=text]:focus,button:focus-visible{outline:3px solid #9DBBD9;outline-offset:1px}
+label{font-size:14px;color:var(--muted);font-weight:600}
+button{font:inherit;font-weight:600;padding:10px 18px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer}
+button:hover{background:var(--accent-d)}button.ghost{background:#fff;color:var(--accent)}button.ghost:hover{background:var(--soft)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.bad{background:var(--bad);border-color:var(--bad)}button.ok{background:var(--ok);border-color:var(--ok)}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.code{font-family:Consolas,"Courier New",monospace;font-size:34px;letter-spacing:.2em;font-weight:700;color:var(--accent)}
+.pl{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border:1px solid var(--line);border-radius:6px;margin-bottom:8px;background:#fff}
+.pl.turn{border-color:var(--accent);background:#EEF4FA}.pl.out{opacity:.45}
+.pill{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--soft);color:var(--muted);margin-left:6px}
+.err{color:var(--bad);font-weight:600;min-height:22px}
+.log{font-size:14px;color:var(--muted);margin:0;padding-left:18px}
+.hint{font-size:14px;color:var(--muted)}
+@media(max-width:520px){main{padding:16px 14px 40px}.code{font-size:28px}}
+
+
+
+</style></head><body>
+<header><b>Spot the Hallucination</b><span>Multiplayer. Share a room code, no login.</span></header>
+<main id="app"></main>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+function h(tag,attrs){var e=document.createElement(tag);attrs=attrs||{};for(var k in attrs){var v=attrs[k];if(k==='class')e.className=v;else if(k.slice(0,2)==='on')e.addEventListener(k.slice(2),v);else if(v!==false&&v!=null)e.setAttribute(k,v===true?'':v);}
+for(var i=2;i<arguments.length;i++){var c=arguments[i];if(c==null||c===false)continue;if(Array.isArray(c))c.forEach(function(x){x!=null&&e.appendChild(typeof x==='string'||typeof x==='number'?document.createTextNode(String(x)):x)});else e.appendChild(typeof c==='string'||typeof c==='number'?document.createTextNode(String(c)):c);}return e;}
+function clean(s){return String(s||'').replace(/[^\x20-\x7E]/g,'').trim().slice(0,16)}
+function getTok(){try{var t=sessionStorage.getItem('sfg-tok');if(!t){t=Math.random().toString(36).slice(2,12);sessionStorage.setItem('sfg-tok',t)}return t}catch(e){return Math.random().toString(36).slice(2,12)}}
+function newCode(){var a='ABCDEFGHJKMNPQRSTUVWXYZ',s='';for(var i=0;i<4;i++)s+=a[Math.floor(Math.random()*a.length)];return s}
+var LOCAL=/[?&]local=1/.test(location.search);
+var Net=(function(){
+  function local(code,isHost,hd){var ch=new BroadcastChannel('sfg-'+GAME+'-'+code),me=isHost?'host':'c'+Math.random().toString(36).slice(2,8);
+    ch.onmessage=function(e){var d=e.data;if(isHost){if(d.to==='host')hd.onMsg(d.from,d.msg)}else if(d.to===me)hd.onMsg('host',d.msg)};
+    setTimeout(function(){hd.onOpen&&hd.onOpen()},30);
+    return{send:function(to,msg){ch.postMessage({to:to,from:me,msg:msg})},close:function(){ch.close()}}}
+  function peer(code,isHost,hd){var conns={},hostId='sfg-'+GAME+'-'+code,p,toHost;
+    if(isHost){p=new Peer(hostId);p.on('open',function(){hd.onOpen()});
+      p.on('connection',function(c){c.on('open',function(){conns[c.peer]=c});c.on('data',function(m){hd.onMsg(c.peer,m)});c.on('close',function(){delete conns[c.peer];hd.onLeave&&hd.onLeave(c.peer)})})}
+    else{p=new Peer();p.on('open',function(){toHost=p.connect(hostId,{reliable:true});toHost.on('open',function(){hd.onOpen()});toHost.on('data',function(m){hd.onMsg('host',m)});toHost.on('close',function(){hd.onClose&&hd.onClose()})})}
+    p.on('error',function(e){hd.onError&&hd.onError(e)});
+    return{send:function(to,msg){if(isHost){var c=conns[to];c&&c.open&&c.send(msg)}else toHost&&toHost.open&&toHost.send(msg)},close:function(){try{p.destroy()}catch(e){}}}}
+  return{make:function(code,isHost,hd){return LOCAL?local(code,isHost,hd):peer(code,isHost,hd)}};
+})();
+
+var GAME='halluc';
+var root=document.getElementById('app');
+var QT=15000,REVEAL_MS=8000,ROUNDS=10;
+var BANK=[
+['The Great Wall of China cannot be seen with the naked eye from the Moon.',1,'From the Moon, no single human-made structure is visible without aid. The wall is long but narrow.'],
+['Octopuses have three hearts.',1,'Two pump blood through the gills and one pumps it to the rest of the body.'],
+['Venus is the hottest planet in the solar system.',1,'Its thick carbon dioxide atmosphere traps heat, so it is hotter than Mercury even though it is farther from the Sun.'],
+['Bananas grow on trees.',0,'The banana plant is a giant herb. What looks like a trunk is tightly packed leaf stalks.'],
+['Humans use only 10 percent of their brains.',0,'Brain imaging shows activity across the whole brain. The 10 percent figure is a myth.'],
+['Lightning never strikes the same place twice.',0,'Tall structures such as the Empire State Building are struck many times a year.'],
+['The Pacific is the largest ocean on Earth.',1,'It covers about a third of the planet surface and is larger than all the land combined.'],
+['Sound travels faster in water than in air.',1,'Roughly four to five times faster, because water is denser and less compressible.'],
+['A tomato is botanically a fruit.',1,'It develops from the flower ovary and holds seeds. Cooks treat it as a vegetable.'],
+['Goldfish have a memory of only three seconds.',0,'Goldfish can remember things for months and can be trained to respond to signals.'],
+['The Sahara is the largest hot desert in the world.',1,'Antarctica is larger overall, but it is a cold desert.'],
+['Water boils at a lower temperature at high altitude.',1,'Lower air pressure means water reaches its boiling point sooner, at a lower temperature.'],
+['Bats are blind.',0,'All bat species can see. Many also use echolocation to hunt in the dark.'],
+['The chemical symbol for gold is Au.',1,'It comes from the Latin word aurum.'],
+['Napoleon Bonaparte was unusually short for a man of his time.',0,'He was about average height. The myth comes from unit confusion and British cartoons.'],
+['An adult human body typically has 206 bones.',1,'Babies are born with more, and many fuse together as they grow.'],
+['Diamonds and graphite are both made of carbon.',1,'The atoms are arranged differently, which gives very different hardness.'],
+['Mumbai is the capital of India.',0,'The capital is New Delhi. Mumbai is the capital of the state of Maharashtra.'],
+['Light travels faster than sound.',1,'That is why you see lightning before you hear thunder.'],
+['Spiders are insects.',0,'Spiders are arachnids. They have eight legs and two body segments, while insects have six legs and three.'],
+['The programming language Python is named after the Monty Python comedy group.',1,'Its creator, Guido van Rossum, was a fan of Monty Python Flying Circus.'],
+['HTTP stands for HyperText Transfer Protocol.',1,'It is the protocol browsers and servers use to exchange web pages.'],
+['Shaving makes hair grow back thicker.',0,'Shaving cuts hair at the surface and does not change thickness or growth rate. The blunt tip only feels coarser.'],
+['Blood in your veins is blue until it meets oxygen.',0,'Blood is always red. Deoxygenated blood is darker red. Veins look blue because of how skin scatters light.'],
+['Marathi is the official language of the Indian state of Maharashtra.',1,'It is spoken by tens of millions of people and is written in the Devanagari script.'],
+['Cracking your knuckles causes arthritis.',0,'Studies have found no link between knuckle cracking and arthritis.'],
+['Sharks are mammals.',0,'Sharks are cartilaginous fish. They breathe through gills and do not nurse their young.'],
+['A language model can state something false in a confident tone.',1,'This is often called a hallucination. Fluent wording is not evidence that a claim is true.'],
+['Australia is both a country and a continent.',1,'It is the only country that occupies an entire continent by itself.'],
+['The Earth takes about 365 and a quarter days to orbit the Sun.',1,'The extra quarter day is why we add a leap day about every four years.'],
+['Mount Everest is the tallest mountain measured from sea level.',1,'Measured from base to peak, Mauna Kea in Hawaii is taller, but much of it is underwater.'],
+['The Sun orbits the Earth once a year.',0,'Earth orbits the Sun. The Sun appears to move across the sky because Earth rotates.'],
+['Humans have more than five senses.',1,'Besides sight, hearing, taste, smell and touch, we sense balance, temperature, pain and body position.'],
+['Penguins live naturally at the North Pole.',0,'Penguins live in the Southern Hemisphere. Polar bears live in the Arctic.'],
+['Honey is made by bees from flower nectar.',1,'Bees collect nectar, then reduce its water content and store it in the hive.']
+];
+var net=null,isHost=false,code='',myTok=getTok(),myName='',S=null,V=null,msg='',conn='',tm=null,deadlineLocal=0;
+function newState(){return{phase:'lobby',players:[],order:[],qi:0,qStart:0,deadline:0,hostTok:null,revealAt:0}}
+function shuffle(a){a=a.slice();for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1)),t=a[i];a[i]=a[j];a[j]=t}return a}
+function join(s,tok,name,peer){var p=s.players.find(function(x){return x.tok===tok});if(p){p.peer=peer;p.online=true;return null}
+  if(s.phase!=='lobby')return'This game has already started.';if(s.players.length>=8)return'Room is full (8 players).';
+  name=clean(name)||'Player';var base=name,n=2;while(s.players.some(function(x){return x.name===name}))name=base+n++;
+  s.players.push({tok:tok,name:name,score:0,peer:peer,online:true,vote:null,ms:0,gain:0,right:false});if(!s.hostTok)s.hostTok=tok;return null}
+function startQ(){S.phase='q';S.qStart=Date.now();S.deadline=S.qStart+QT;S.players.forEach(function(p){p.vote=null;p.gain=0;p.right=false});
+  clearTimeout(tm);tm=setTimeout(doReveal,QT+300)}
+function doReveal(){if(!S||S.phase!=='q')return;clearTimeout(tm);var item=BANK[S.order[S.qi]];
+  S.players.forEach(function(p){p.right=p.vote!==null&&p.vote===!!item[1];p.gain=p.right?100+Math.round(50*Math.max(0,1-p.ms/QT)):0;p.score+=p.gain});
+  S.phase='reveal';S.revealAt=Date.now()+REVEAL_MS;tm=setTimeout(nextQ,REVEAL_MS);pushAll()}
+function nextQ(){if(!S||S.phase!=='reveal')return;clearTimeout(tm);S.qi++;if(S.qi>=S.order.length){S.phase='over';pushAll()}else{startQ();pushAll()}}
+function act(s,tok,a){var p=s.players.find(function(x){return x.tok===tok});if(!p)return'Not in this game.';
+  if(a.a==='start'){if(tok!==s.hostTok||s.phase!=='lobby')return'Only the host can start.';if(s.players.length<2)return'Need at least 2 players.';
+    s.order=shuffle(BANK.map(function(_,i){return i})).slice(0,ROUNDS);s.qi=0;s.players.forEach(function(x){x.score=0});startQ();return null}
+  if(a.a==='vote'){if(s.phase!=='q'||p.vote!==null)return null;p.vote=!!a.v;p.ms=Math.min(QT,Date.now()-s.qStart);
+    if(s.players.every(function(x){return !x.online||x.vote!==null}))setTimeout(doReveal,400);return null}
+  if(a.a==='skip'){if(tok!==s.hostTok)return'Only the host can do that.';if(s.phase==='reveal')nextQ();else if(s.phase==='q')doReveal();return null}
+  if(a.a==='again'){if(tok!==s.hostTok||s.phase!=='over')return'Only the host can do that.';s.players=s.players.filter(function(x){return x.online});s.phase='lobby';return null}
+  return'Unknown action.'}
+function view(s,tok){var me=s.players.findIndex(function(p){return p.tok===tok}),item=(s.phase==='q'||s.phase==='reveal')?BANK[s.order[s.qi]]:null,rev=s.phase==='reveal';
+  return{phase:s.phase,code:code,me:me,isHost:tok===s.hostTok,qNo:s.qi+1,total:s.order.length,statement:item?item[0]:'',
+   answer:rev?!!item[1]:null,why:rev?item[2]:'',remaining:s.phase==='q'?Math.max(0,s.deadline-Date.now()):0,nextIn:rev?Math.max(0,s.revealAt-Date.now()):0,
+   myVote:me>=0?s.players[me].vote:null,
+   players:s.players.map(function(p){return{name:p.name,score:p.score,online:p.online,voted:p.vote!==null,right:rev?p.right:null,gain:rev?p.gain:0,vote:rev?p.vote:null}})}}
+function pushAll(){if(!S)return;V=view(S,myTok);S.players.forEach(function(p){if(p.tok!==myTok&&p.peer&&p.online)net.send(p.peer,{t:'state',view:view(S,p.tok)})});onView()}
+function hostGame(name){myName=name;code=newCode();isHost=true;S=newState();conn='Creating room...';render();
+  net=Net.make(code,true,{onOpen:function(){join(S,myTok,myName,'host');conn='';pushAll()},
+    onMsg:function(from,m){if(m.t==='hello'){var e=join(S,m.tok,m.name,from);if(e)net.send(from,{t:'err',m:e});else pushAll()}
+      else if(m.t==='act'){var p=S.players.find(function(x){return x.peer===from});if(!p)return;var e2=act(S,p.tok,m.a);if(e2)net.send(from,{t:'err',m:e2});if(S.phase==='q'||S.phase==='lobby'||S.phase==='over'||m.a.a!=='skip')pushAll()}},
+    onLeave:function(from){var p=S.players.find(function(x){return x.peer===from});if(p){p.online=false;if(S.phase==='q'&&S.players.every(function(x){return !x.online||x.vote!==null}))doReveal();else pushAll()}},
+    onError:function(e){if(e&&e.type==='unavailable-id'){code=newCode();hostGame(myName)}else{conn='Connection problem: '+(e&&e.type||'unknown')+'. Reload and try again.';render()}}})}
+function joinGame(name,c){myName=name;code=c.toUpperCase();isHost=false;conn='Joining room '+code+'...';render();
+  net=Net.make(code,false,{onOpen:function(){conn='';net.send('host',{t:'hello',tok:myTok,name:myName})},
+    onMsg:function(from,m){if(m.t==='state'){V=m.view;msg='';onView()}else if(m.t==='err'){msg=m.m;if(!V)conn=m.m;render()}},
+    onClose:function(){conn='Disconnected from the host. Reload to rejoin.';render()},
+    onError:function(e){conn=e&&e.type==='peer-unavailable'?'No room with that code. Check the code and try again.':'Connection problem: '+(e&&e.type||'unknown');render()}})}
+function send(a){if(isHost){var e=act(S,myTok,a);msg=e||'';if(a.a!=='skip')pushAll()}else net.send('host',{t:'act',a:a})}
+var tick=null;
+function onView(){deadlineLocal=Date.now()+(V.phase==='q'?V.remaining:V.nextIn);render();clearInterval(tick);if(V&&(V.phase==='q'||V.phase==='reveal'))tick=setInterval(function(){var el=document.getElementById('tbar'),tl=document.getElementById('tleft');if(!el)return;var tot=V.phase==='q'?QT:REVEAL_MS,left=Math.max(0,deadlineLocal-Date.now());el.style.width=(100*left/tot)+'%';if(tl)tl.textContent=Math.ceil(left/1000)+'s'},100)}
+function home(){var nm=h('input',{type:'text',id:'nm',maxlength:'16',placeholder:'Your name',value:myName}),cd=h('input',{type:'text',id:'cd',maxlength:'4',placeholder:'ROOM CODE',style:'text-transform:uppercase'});
+  return[h('h1',null,'Spot the Hallucination'),h('p',{class:'muted'},'An AI wrote a short claim. Is it a fact, or a confident fabrication? 2 to 8 players, 10 claims, 15 seconds each. Faster correct answers score more.'),
+   h('div',{class:'card'},h('label',{for:'nm'},'Your name'),nm,
+    h('button',{onclick:function(){var n=clean(nm.value);if(!n){msg='Enter your name first.';return render()}hostGame(n)}},'Create a room'),
+    h('p',{class:'hint',style:'margin-top:18px'},'Or join a friend:'),h('label',{for:'cd'},'Room code'),cd,
+    h('button',{class:'ghost',onclick:function(){var n=clean(nm.value),c=cd.value.trim();if(!n)return(msg='Enter your name first.',render());if(c.length!==4)return(msg='The room code has 4 letters.',render());joinGame(n,c)}},'Join room'),
+    h('div',{class:'err',style:'margin-top:10px'},msg)),
+   h('div',{class:'card'},h('h2',null,'How to play'),h('ol',{class:'log'},h('li',null,'A claim appears on every screen at the same time.'),h('li',null,'Tap Fact or Fabricated before the timer runs out.'),h('li',null,'Correct answers earn 100 points plus up to 50 for speed.'),h('li',null,'After each claim you see the answer and the reason.')))]}
+function lobby(){var u=location.origin+location.pathname;
+  return[h('h1',null,'Room'),h('div',{class:'card'},h('p',{class:'muted'},'Share this code. Friends open this page and choose "Join room".'),h('div',{class:'code'},V.code),h('p',{class:'hint'},'Link: '+u)),
+   h('div',{class:'card'},h('h2',null,'Players ('+V.players.length+'/8)'),V.players.map(function(p,i){return h('div',{class:'pl'},h('span',null,p.name,i===V.me?h('span',{class:'pill'},'you'):null,i===0?h('span',{class:'pill'},'host'):null),h('span',{class:'hint'},p.online?'ready':'offline'))}),
+   V.isHost?h('button',{disabled:V.players.length<2,onclick:function(){send({a:'start'})}},V.players.length<2?'Waiting for players...':'Start game'):h('p',{class:'hint'},'Waiting for the host to start.'),h('div',{class:'err'},msg))]}
+function board(rev){var ps=V.players.map(function(p,i){return{p:p,i:i}}).sort(function(a,b){return b.p.score-a.p.score});
+  return h('div',{class:'card'},h('h2',null,'Scores'),ps.map(function(x){var p=x.p;return h('div',{class:'pl'},h('span',null,p.name,x.i===V.me?h('span',{class:'pill'},'you'):null,!p.online?h('span',{class:'pill'},'offline'):null,(!rev&&V.phase==='q'&&p.voted)?h('span',{class:'pill'},'answered'):null),
+    h('span',null,rev&&p.right!==null?h('span',{class:'hint',style:'margin-right:10px;color:'+(p.right?'var(--ok)':'var(--bad)')},p.right?'+'+p.gain:(p.vote===null?'no answer':'wrong')):null,h('b',null,p.score)))}))}
+function timer(){return h('div',{class:'row',style:'margin:0 0 14px'},h('div',{style:'flex:1;height:8px;background:var(--soft);border-radius:99px;overflow:hidden'},h('div',{id:'tbar',style:'height:100%;background:var(--accent);width:100%'})),h('span',{id:'tleft',class:'hint',style:'min-width:30px;text-align:right'},''))}
+function question(){var voted=V.myVote!==null;
+  return[h('div',{class:'row',style:'justify-content:space-between'},h('h1',null,'Claim '+V.qNo+' of '+V.total),h('span',{class:'hint'},'Room '+V.code)),timer(),
+   h('div',{class:'card'},h('p',{class:'hint',style:'margin-bottom:6px'},'An AI wrote this:'),h('p',{style:'font-size:22px;line-height:1.35;margin:0'},'"'+V.statement+'"')),
+   voted?h('div',{class:'card'},h('p',{style:'margin:0'},'You answered '+(V.myVote?'Fact':'Fabricated')+'. Waiting for the others...')):
+   h('div',{class:'row',style:'margin-bottom:16px'},h('button',{class:'ok',style:'flex:1;padding:16px',onclick:function(){send({a:'vote',v:true})}},'Fact'),h('button',{class:'bad',style:'flex:1;padding:16px',onclick:function(){send({a:'vote',v:false})}},'Fabricated')),
+   board(false)]}
+function reveal(){var right=V.players.filter(function(p){return p.right}).length;
+  return[h('div',{class:'row',style:'justify-content:space-between'},h('h1',null,'Claim '+V.qNo+' of '+V.total),h('span',{class:'hint'},'Next claim soon')),timer(),
+   h('div',{class:'card'},h('p',{style:'font-size:18px;margin:0 0 10px'},'"'+V.statement+'"'),h('p',{style:'font-size:22px;font-weight:700;margin:0 0 8px;color:'+(V.answer?'var(--ok)':'var(--bad)')},V.answer?'Fact':'Fabricated'),h('p',{class:'muted',style:'margin:0 0 8px'},V.why),h('p',{class:'hint',style:'margin:0'},right+' of '+V.players.length+' got it right.')),
+   board(true),V.isHost?h('button',{class:'ghost',onclick:function(){send({a:'skip'})}},'Skip to next'):null]}
+function over(){var ps=V.players.map(function(p){return p}).sort(function(a,b){return b.score-a.score});
+  return[h('h1',null,'Final scores'),h('div',{class:'card'},h('p',{style:'font-size:24px;font-weight:700;color:var(--accent)'},ps[0].name+' wins with '+ps[0].score+' points.'),
+   ps.map(function(p,i){return h('div',{class:'pl'},h('span',null,(i+1)+'. '+p.name),h('b',null,p.score))}),
+   V.isHost?h('button',{onclick:function(){send({a:'again'})}},'Play again'):h('p',{class:'hint'},'The host can start a new game.'))]}
+function render(){root.textContent='';var kids;
+  if(conn){kids=[h('div',{class:'card'},h('p',{style:'margin:0'},conn),conn.indexOf('Creating')<0&&conn.indexOf('Joining')<0?h('button',{class:'ghost',style:'margin-top:12px',onclick:function(){location.reload()}},'Back'):null)]}
+  else if(!V)kids=home();else if(V.me<0)kids=[h('div',{class:'card'},h('p',null,'You are not part of this room.'))];
+  else if(V.phase==='lobby')kids=lobby();else if(V.phase==='q')kids=question();else if(V.phase==='reveal')kids=reveal();else kids=over();
+  kids.forEach(function(k){if(k)root.appendChild(k)})}
+render();
+
+</script></body></html>
